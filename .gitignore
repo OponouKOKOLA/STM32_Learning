@@ -1,0 +1,16 @@
+# Fichiers de compilation
+Debug/
+Release/
+build/
+
+# Fichiers temporaires
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+.metadata/
+# Fichiers temporaires de l'editeur
+*~
+*.swp
