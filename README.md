@@ -88,16 +88,6 @@ Série de projets pour apprendre le **Cortex-M4** de la **STM32F446RE** (carte N
 [Voir l'effet breathing (GIF)](timer_pwm_output/timer_pwm_output.gif)
 
 
-
-## Compilation
-
-1. Cloner le dépôt :
-```bash
-   git clone https://github.com/OponouKOKOLA/STM32_Learning.git
-```
-2. Dans STM32CubeIDE : **File → Import → Existing Projects into Workspace**, puis choisir le dossier du projet voulu.
-3. Compiler avec **Build** (icône marteau), puis flasher la Nucleo avec **Run** (câble USB branché).
-4. Pour les projets qui utilisent l'UART : ouvrir un terminal série sur le port de la Nucleo, à **115200 bauds, 8N1**.
    
 ## Suite prévue
 
