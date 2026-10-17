@@ -1,60 +1,49 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
+  * @brief          : Mesure de fréquence par Timer Input Capture avec transmission UART
+  * @project        : Timer_Input_Capture
+  * @author         : Oponou KOKOLA
   *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
+  * @details        :
+  *   1. TIM2 en Input Capture (Canal 1, PA0) : mesure la période d'un signal externe.
+  *   2. TIM6 génère un signal de test sur PB0 (bascule toutes les 500 µs -> 1 kHz).
+  *   3. La fréquence est calculée et envoyée sur USART2 (115200 bauds).
+  *   4. Architecture non bloquante : interruptions + boucle principale.
   *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
+  * Câblage de test :  PB0 à PA0.
   *
+  * Calculs :
+  *   TIM2 : 84 MHz / (83 + 1) = 1 MHz -> 1 tick = 1 µs
+  *   TIM6 : PSC = 83, ARR = 499 -> interruption toutes les 500 µs
+  *          -> PB0 change d'état toutes les 500 µs -> période 1 ms -> 1 kHz
+  *   Fréquence mesurée = 1 000 000 / diff (diff = nombre de ticks entre 2 fronts montants)
+
   ******************************************************************************
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
-/* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stdio.h"
-#include "string.h"
-#include "stdint.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
-
-/* USER CODE END PTD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
 /* Private variables ---------------------------------------------------------*/
-
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim6;
-
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-volatile uint32_t prev = 0; //valeur du compteur lors de la capture précédente
-volatile uint32_t diff = 0;
-volatile uint8_t  premier = 1;
-volatile uint8_t  mesure_prete = 0;
-const uint32_t freq_inter = 1000000U;// frequence intermediare fint= fhorloge/(psc+1))
+
+volatile uint32_t prev = 0;          // Compteur lors de la capture précédente
+volatile uint32_t diff = 0;          // Ticks écoulés entre deux captures
+volatile uint8_t  premier = 1;       // 1 = on attend encore la toute première capture
+volatile uint8_t  mesure_prete = 0;  // 1 = une nouvelle mesure est disponible
+
+const uint32_t freq_inter = 1000000U; // Fréquence du compteur TIM2 : 84 MHz / (83+1)
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,106 +52,67 @@ static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_USART2_UART_Init(void);
-/* USER CODE BEGIN PFP */
 
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
 int main(void)
 {
-
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
   SystemClock_Config();
 
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_TIM2_Init();
   MX_TIM6_Init();
   MX_USART2_UART_Init();
+
   /* USER CODE BEGIN 2 */
-  SCB->SCR |= SCB_SCR_SLEEPONEXIT_Msk;
-	HAL_TIM_Base_Start_IT(&htim6);
-	HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_1);
-
-	char msg[40];
-	uint32_t freq;
-	uint32_t dernier = 0;
-  /* USER CODE END 2 */
-
-  /* Initialize leds */
   BSP_LED_Init(LED2);
 
-  /* Initialize USER push-button, will be used to trigger an interrupt each time it's pressed.*/
-  BSP_PB_Init(BUTTON_USER, BUTTON_MODE_EXTI);
+  /* Démarrage des deux timers avec interruption */
+  HAL_TIM_Base_Start_IT(&htim6);               // Génère le signal de test sur PB0
+  HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_1);  // Capture les fronts montants sur PA0
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+  char     msg[64];       // Buffer du message à envoyer
+  uint32_t freq;          // Fréquence calculée (Hz)
+  uint32_t dernier = 0;   // Date (ms) du dernier affichage
+  /* USER CODE END 2 */
+
   while (1)
   {
-
-
-    /* USER CODE END WHILE */
-	  if (mesure_prete && (HAL_GetTick() - dernier >= 500))
-	    {
-	      dernier = HAL_GetTick();
-	      mesure_prete = 0;
-	      if(diff !=0)
-	      {
-	    	  freq = freq_inter  / diff;
-	    	  	      sprintf(msg, "Freq = %lu Hz\r\n", (unsigned long)freq);
-	    	  	      HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-	      }
-
-	    }
-
     /* USER CODE BEGIN 3 */
+    /* Une mesure est dispo et au moins 500 ms depuis le dernier affichage.
+     * Sans ce délai, on enverrait 1000 messages par seconde : trop pour
+     * l'UART à 115200 bauds. */
+    if (mesure_prete && (HAL_GetTick() - dernier >= 500))
+    {
+      mesure_prete = 0;
+      dernier = HAL_GetTick();
+
+      uint32_t d = diff;               // Copie locale (diff peut changer en interruption)
+      if (d > 0)
+      {
+        freq = freq_inter / d;         // Fréquence = 1 MHz / nombre de ticks
+
+        int len = snprintf(msg, sizeof(msg), "Periode = %lu us\r\n", (unsigned long)d);
+        HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+        HAL_Delay(10);
+
+        len = snprintf(msg, sizeof(msg), "Frequence = %lu Hz\r\n", (unsigned long)freq);
+        HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+      }
+    }
+    /* USER CODE END 3 */
   }
-  /* USER CODE END 3 */
 }
 
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -178,8 +128,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -194,24 +142,14 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
+  * @brief TIM2 : Input Capture, compteur 32 bits à 1 MHz
   */
 static void MX_TIM2_Init(void)
 {
-
-  /* USER CODE BEGIN TIM2_Init 0 */
-
-  /* USER CODE END TIM2_Init 0 */
-
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_IC_InitTypeDef sConfigIC = {0};
 
-  /* USER CODE BEGIN TIM2_Init 1 */
-
-  /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 83;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
@@ -237,6 +175,7 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+
   sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
   sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
   sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
@@ -245,33 +184,19 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM2_Init 2 */
-
-  /* USER CODE END TIM2_Init 2 */
-
 }
 
 /**
-  * @brief TIM6 Initialization Function
-  * @param None
-  * @retval None
+  * @brief TIM6 : interruption toutes les 500 µs (signal de test)
   */
 static void MX_TIM6_Init(void)
 {
-
-  /* USER CODE BEGIN TIM6_Init 0 */
-
-  /* USER CODE END TIM6_Init 0 */
-
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
-  /* USER CODE BEGIN TIM6_Init 1 */
-
-  /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 83;
+  htim6.Init.Prescaler = 83;                 // 1 MHz -> 1 tick = 1 µs
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 499;
+  htim6.Init.Period = 499;                   // 500 ticks = 500 µs
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -283,27 +208,10 @@ static void MX_TIM6_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM6_Init 2 */
-
-  /* USER CODE END TIM6_Init 2 */
-
 }
 
-/**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_USART2_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
@@ -316,101 +224,81 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
 }
 
 /**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
+  * @brief GPIO : PB0 en sortie (signal de test généré par TIM6)
   */
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
 
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
+
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PB0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief  Interruption TIM6 (toutes les 500 µs) : génère le signal de test sur PB0
+  */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim->Instance == TIM6)
   {
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+	  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0); // Signal carré de 1kHz (vérifié à l'analyseur logique)
   }
 }
 
+/**
+  * @brief  Interruption d'Input Capture TIM2 (à chaque front montant sur PA0)
+  */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
   if (htim->Instance == TIM2 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
   {
-    uint32_t now = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
+	  // Valeur du compteur mémorisée dans CCR1 par le matériel au moment du front montant
+	  uint32_t now = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
 
     if (premier)
     {
+      // Première capture
       prev = now;
       premier = 0;
     }
     else
     {
+      // Période = différence entre deux captures
       diff = now - prev;
       prev = now;
-      mesure_prete = 1;
+      mesure_prete = 1;   // Prévient la boucle principale
     }
   }
-}/* USER CODE END 4 */
+}
 
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
+/* USER CODE END 4 */
+
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
+
 #ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
