@@ -97,8 +97,6 @@ Série de projets pour apprendre le **Cortex-M4** de la **STM32F446RE** (carte N
   - [x] I2C
   - [ ] SPI
   - [ ] CAN
-  - [ ] ADC
-  - [ ] DAC
   - [ ] DMA
   - [ ] **RTOS** : FreeRTOS (tâches, files d'attente, sémaphores, mutex), puis Zephyr
   
